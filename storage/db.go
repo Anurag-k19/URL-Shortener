@@ -22,9 +22,18 @@ func InitDB() {
 	dbname := os.Getenv("DBNAME")
 	dbpassword := os.Getenv("PASSWORD")
 	sslmode := os.Getenv("SSLMODE")
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
 
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s", username, dbpassword, dbname, sslmode)
-	fmt.Println("Conn with:  ", connStr)
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s", host, port, username, dbpassword, dbname, sslmode)
+
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {

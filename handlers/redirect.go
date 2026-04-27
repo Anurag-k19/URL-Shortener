@@ -1,10 +1,11 @@
 package handlers
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
 	"time"
 	"url_shortner/storage"
-	"url_shortner/utils"
 )
 
 // RedirectHandler handles GET requests to redirect short URLs to their original destination
@@ -17,25 +18,23 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storage.Mu.Lock()
-	defer storage.Mu.Unlock()
-	// Look up short URL in storage
-	data, exists := storage.URLmap[shortId]
-
-	if !exists {
+	// Look up short URL in database
+	var data struct {
+		LongURL   string
+		ExpiresAt sql.NullTime
+	}
+	row := storage.DB.QueryRow("SELECT long_url, expires_at FROM urls WHERE short_id = $1", shortId)
+	err := row.Scan(&data.LongURL, &data.ExpiresAt)
+	if err != nil {
 		http.Error(w, "URL not Found", http.StatusNotFound)
 		return
 	}
+	fmt.Println("[DEBUG] Short ID:", shortId, "| ExpiresAt Valid:", data.ExpiresAt.Valid, "| ExpiresAt Time:", data.ExpiresAt.Time, "| Now:", time.Now())
+
 	// Check if URL has expired and delete if necessary
-	if !data.ExpiresAt.IsZero() && time.Now().After(data.ExpiresAt) {
-		delete(storage.URLmap, shortId)
+	if data.ExpiresAt.Valid && time.Now().UTC().After(data.ExpiresAt.Time) {
+		storage.DB.Exec("DELETE FROM urls WHERE short_id = $1", shortId)
 		http.Error(w, "Link expired", http.StatusGone)
-		return
-	}
-
-	if !utils.Isreachable(data.LongURL) {
-
-		http.Error(w, "Invalid URL: Not Reachable", http.StatusBadRequest)
 		return
 	}
 

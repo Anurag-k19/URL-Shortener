@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,41 +48,51 @@ func Shortenhandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storage.Mu.Lock()
-	defer storage.Mu.Unlock()
-	// Create unique key combining userID and original URL
-	key := userID + ":" + req.URL
-	// Return existing short URL if user already shortened this URL
-	if existingId, exists := storage.Reversemap[key]; exists {
+	// Check if user already shortened this URL
+	var existingID string
+	err = storage.DB.QueryRow(
+		"SELECT short_id from urls WHERE user_id =$1 AND long_url=$2",
+		userID, req.URL,
+	).Scan(&existingID)
+	if err == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/" + existingId})
+		json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/" + existingID})
 		return
 	}
 
-	// Generate unique short ID by checking for collisions
+	// Generate unique short ID by checking for collisions in database
 	var shortId string
 	for {
 		shortId = utils.GenerateShortId()
-		if _, exists := storage.URLmap[shortId]; !exists {
+		var count int
+		err = storage.DB.QueryRow("SELECT COUNT(*) FROM urls WHERE short_id = $1", shortId).Scan(&count)
+		if err != nil || count == 0 {
 			break
 		}
-
 	}
 	// Set 5-minute expiry for guest URLs, no expiry for registered users
-	var expiry time.Time
+	var expiry sql.NullTime
 
 	if userID == "guest" {
-		expiry = time.Now().Add(5 * time.Minute)
+		expiry = sql.NullTime{
+			Time:  time.Now().UTC().Add(1 * time.Minute),
+			Valid: true,
+		}
 	} else {
-		expiry = time.Time{} // no expiry
+		expiry = sql.NullTime{Valid: false} // no expiry
 	}
 
-	// Store the URL mapping and reverse mapping for future lookups
-	storage.URLmap[shortId] = storage.URLData{
-		LongURL:   req.URL,
-		ExpiresAt: expiry,
+	var createdAt = time.Now().UTC()
+	// Store URL in PostgreSQL database
+	_, err = storage.DB.Exec(
+		"INSERT INTO urls (short_id, long_url, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)",
+		shortId, req.URL, userID, expiry, createdAt,
+	)
+	if err != nil {
+		http.Error(w, "Failed to store URL", http.StatusInternalServerError)
+		return
 	}
-	storage.Reversemap[key] = shortId
+
 	fmt.Println("Stored:", shortId, "→", req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/" + shortId})

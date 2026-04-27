@@ -63,7 +63,8 @@ Redirects to the original URL if found and not expired.
 ## Getting Started
 
 ### Prerequisites
-- Go 1.16 or higher
+- Go 1.26.1 or higher
+- PostgreSQL 12 or higher
 
 ### Installation
 
@@ -72,10 +73,35 @@ Redirects to the original URL if found and not expired.
 cd "URL Shortner"
 ```
 
-2. Build the module:
+2. Download Go dependencies:
+```bash
+go mod download
+```
+
+3. Build the module:
 ```bash
 go build
 ```
+
+4. Set up PostgreSQL database:
+
+   a. Create the database:
+   ```bash
+   createdb url_shortener
+   ```
+
+   b. Initialize the table:
+   ```bash
+   psql url_shortener < init.sql
+   ```
+
+   c. Set up environment variables by copying `.env.example` to `.env`:
+   ```env
+   DB_USER=your_postgres_username
+   PASSWORD=your_postgres_password
+   DBNAME=url_shortener
+   SSLMODE=disable
+   ```
 
 ### Running the Server
 
@@ -109,29 +135,50 @@ curl -i http://localhost:8000/abc123
 
 ## Data Storage
 
-The application uses **in-memory maps** for storage:
+The application uses **PostgreSQL** for persistent storage with the following schema:
 
-- **URLmap**: Maps short IDs to their original URLs and expiration times
-- **Reversemap**: Maps (userID:originalURL) to short IDs for deduplication
-
-**Note:** Data is not persisted. All URLs are lost when the server restarts.
+- **short_id**: Unique 6-character identifier for the shortened URL
+- **long_url**: The original long URL
+- **user_id**: User identifier (guest or registered)
+- **expires_at**: Expiration timestamp (NULL for permanent URLs)
+- **created_at**: URL creation timestamp
 
 ## Implementation Details
 
 ### Short ID Generation
 - **Length**: 6 characters
 - **Charset**: a-z, A-Z, 0-9 (62 possible characters)
-- **Uniqueness**: Collision detection ensures all IDs are unique
+- **Uniqueness**: Collision detection queries database
 - **Probability**: 62^6 = ~56 billion possible combinations
 
 ### URL Expiration
-- **Guest URLs**: Expire 5 minutes after creation
+- **Guest URLs**: Expire 5 seconds after creation (configurable in code)
 - **User URLs**: No expiration (valid indefinitely)
-- **Cleanup**: Expired URLs are deleted on access attempts
+- **Cleanup**: Expired URLs are deleted on redirect attempts
 
 ### Deduplication
-- Same user requesting the same URL receives the same short ID
+- Database query prevents duplicate short IDs for the same user and URL
+- Returns existing short ID if user tries to shorten the same URL again
 - Prevents duplicate entries and serves as URL existence check
+
+### Database Indexes
+- `idx_short_id`: For fast lookups during redirects
+- `idx_user_id`: For querying user's shortened URLs
+
+## Troubleshooting
+
+### "URL not Found" Error
+1. **Database not initialized**: Run `psql url_shortener < init.sql`
+2. **Database connection failed**: Check `.env` file credentials and PostgreSQL service is running
+3. **Table doesn't exist**: Verify table creation with `psql url_shortener -c "\dt"`
+
+### "Failed to store URL" Error
+1. **Database permissions**: Ensure database user has INSERT permissions
+2. **Connection pool exhausted**: Check if application is closing database connections properly
+
+### Connection Refused
+1. Make sure PostgreSQL is running: `psql --version` and try connecting manually
+2. Verify connection string in `.env` matches your PostgreSQL setup
 
 ## Future Improvements
 
