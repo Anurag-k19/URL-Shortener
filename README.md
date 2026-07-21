@@ -1,196 +1,158 @@
 # URL Shortener
 
-A lightweight HTTP-based URL shortening service written in Go. This service allows users to convert long URLs into short, easy-to-share links with optional expiration for guests.
+A lightweight Go-based URL shortening service that converts long links into short, shareable URLs and redirects them back to the original destination.
 
-## Features
+## What the API is for
 
-- **URL Shortening**: Convert long URLs into 6-character short codes
-- **User Management**: Support for registered users and guest users
-- **Expiration Handling**: Guest URLs expire after 5 minutes; registered user URLs never expire
-- **Deduplication**: Prevents duplicate short URLs for the same user and original URL
-- **Zero-Collision Generation**: Automatically handles short ID collision prevention
-- **Redirect Service**: Retrieve original URLs from short codes
+The API is used to:
 
-## Project Structure
+- Create a short URL from a long URL
+- Redirect a short URL back to the original URL
+- Keep track of guest and user-specific links
+- Cache redirects in Redis for faster lookups
 
-```
+## How it works
+
+1. A client sends a long URL to the shorten endpoint.
+2. The server validates the URL and checks whether it is reachable.
+3. A short ID is generated and stored in PostgreSQL.
+4. The client receives a short URL that can be used later.
+5. When the short URL is visited, the server redirects the user to the original URL.
+
+## Project structure
+
+```text
 .
-├── main.go                 # Server setup and route registration
-├── go.mod                  # Go module definition
+├── main.go
 ├── handlers/
-│   ├── shorten.go         # POST /shorten endpoint for creating short URLs
-│   └── redirect.go        # GET / endpoint for redirecting to original URLs
+│   ├── shorten.go
+│   └── redirect.go
 ├── storage/
-│   └── memory.go          # In-memory storage for URLs using maps
-└── utils/
-    └── generator.go       # Short ID generation utility
+│   ├── db.go
+│   └── redis.go
+├── utils/
+│   ├── generator.go
+│   └── validateURL.go
+└── go.mod
 ```
 
-## API Endpoints
+## API endpoints
 
-### Create Short URL
-**POST** `/shorten`
+### 1) Create a short URL
 
-**Headers:**
-- `X-User-ID` (optional): User identifier for URL persistence. If not provided, defaults to "guest"
+Endpoint:
 
-**Request Body:**
+```http
+POST /shorten
+```
+
+Use this endpoint when you want to shorten a long URL.
+
+Headers:
+
+- `Content-Type: application/json`
+- `X-User-ID` (optional): if provided, the URL is associated with that user; otherwise it is treated as a guest link
+
+Request body:
+
 ```json
 {
   "url": "https://example.com/very/long/url"
 }
 ```
 
-**Response:**
+Response:
+
 ```json
 {
   "short_url": "http://localhost:8000/abc123"
 }
 ```
 
-**Guest URLs:** Expire after 5 minutes  
-**Registered User URLs:** Never expire
+Behavior:
 
-### Redirect to Original URL
-**GET** `/{shortId}`
+- Guest links expire after 2 minutes.
+- User-linked links do not expire.
+- If the same user submits the same long URL again, the service returns the existing short URL instead of creating a duplicate.
 
-Redirects to the original URL if found and not expired.
+### 2) Redirect to the original URL
 
-**Success:** HTTP 302 (Found)  
-**Not Found:** HTTP 404  
-**Expired:** HTTP 410 (Gone)
+Endpoint:
 
-## Getting Started
+```http
+GET /{shortId}
+```
+
+Use this endpoint when a user opens a shortened link.
+
+Behavior:
+
+- If the short ID exists in Redis, the redirect is served quickly.
+- Otherwise, the server looks it up in PostgreSQL.
+- If the URL is not found, the API returns `404 Not Found`.
+- If the link has expired, it returns `410 Gone`.
+- If the link is valid, it returns `302 Found` and redirects the browser.
+
+## Example usage
+
+### Create a short URL
+
+```bash
+curl -X POST http://localhost:8000/shorten \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.example.com"}'
+```
+
+### Create a short URL for a specific user
+
+```bash
+curl -X POST http://localhost:8000/shorten \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: user123" \
+  -d '{"url":"https://www.example.com"}'
+```
+
+### Open a shortened URL
+
+```bash
+curl -i http://localhost:8000/abc123
+```
+
+## Setup and running
 
 ### Prerequisites
-- Go 1.26.1 or higher
-- PostgreSQL 12 or higher
 
-### Installation
+- Go installed
+- PostgreSQL running
+- Redis running on `localhost:6379`
 
-1. Navigate to the project directory:
-```bash
-cd "URL Shortner"
+### Environment variables
+
+Create a `.env` file in the project root with values similar to:
+
+```env
+DB_USER=your_postgres_user
+PASSWORD=your_postgres_password
+DBNAME=url_shortener
+SSLMODE=disable
+DB_HOST=localhost
+DB_PORT=5432
 ```
 
-2. Download Go dependencies:
-```bash
-go mod download
-```
-
-3. Build the module:
-```bash
-go build
-```
-
-4. Set up PostgreSQL database:
-
-   a. Create the database:
-   ```bash
-   createdb url_shortener
-   ```
-
-   b. Initialize the table:
-   ```bash
-   psql url_shortener < init.sql
-   ```
-
-   c. Set up environment variables by copying `.env.example` to `.env`:
-   ```env
-   DB_USER=your_postgres_username
-   PASSWORD=your_postgres_password
-   DBNAME=url_shortener
-   SSLMODE=disable
-   ```
-
-### Running the Server
+### Run the server
 
 ```bash
 go run main.go
 ```
 
-The server will start on `http://localhost:8000`
+The server listens on `http://localhost:8000`.
 
-## Usage Examples
+## Storage details
 
-### Create a Short URL (Guest)
-```bash
-curl -X POST http://localhost:8000/shorten \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.example.com"}'
-```
+- PostgreSQL stores the mapping between short IDs and original URLs.
+- Redis is used as a temporary cache for redirects.
+- Guest URLs are marked with an expiry time; user URLs are stored without an expiry.
 
-### Create a Short URL (Registered User)
-```bash
-curl -X POST http://localhost:8000/shorten \
-  -H "Content-Type: application/json" \
-  -H "X-User-ID: user123" \
-  -d '{"url": "https://www.example.com"}'
-```
+## Notes
 
-### Access Short URL
-```bash
-curl -i http://localhost:8000/abc123
-```
-
-## Data Storage
-
-The application uses **PostgreSQL** for persistent storage with the following schema:
-
-- **short_id**: Unique 6-character identifier for the shortened URL
-- **long_url**: The original long URL
-- **user_id**: User identifier (guest or registered)
-- **expires_at**: Expiration timestamp (NULL for permanent URLs)
-- **created_at**: URL creation timestamp
-
-## Implementation Details
-
-### Short ID Generation
-- **Length**: 6 characters
-- **Charset**: a-z, A-Z, 0-9 (62 possible characters)
-- **Uniqueness**: Collision detection queries database
-- **Probability**: 62^6 = ~56 billion possible combinations
-
-### URL Expiration
-- **Guest URLs**: Expire 5 seconds after creation (configurable in code)
-- **User URLs**: No expiration (valid indefinitely)
-- **Cleanup**: Expired URLs are deleted on redirect attempts
-
-### Deduplication
-- Database query prevents duplicate short IDs for the same user and URL
-- Returns existing short ID if user tries to shorten the same URL again
-- Prevents duplicate entries and serves as URL existence check
-
-### Database Indexes
-- `idx_short_id`: For fast lookups during redirects
-- `idx_user_id`: For querying user's shortened URLs
-
-## Troubleshooting
-
-### "URL not Found" Error
-1. **Database not initialized**: Run `psql url_shortener < init.sql`
-2. **Database connection failed**: Check `.env` file credentials and PostgreSQL service is running
-3. **Table doesn't exist**: Verify table creation with `psql url_shortener -c "\dt"`
-
-### "Failed to store URL" Error
-1. **Database permissions**: Ensure database user has INSERT permissions
-2. **Connection pool exhausted**: Check if application is closing database connections properly
-
-### Connection Refused
-1. Make sure PostgreSQL is running: `psql --version` and try connecting manually
-2. Verify connection string in `.env` matches your PostgreSQL setup
-
-## Future Improvements
-
-- Add persistent storage (database)
-- Implement user authentication
-- Add URL analytics (click tracking)
-- Implement custom short aliases
-- Add API rate limiting
-- Create web UI for URL management
-- Support batch URL shortening
-- Add URL preview before redirect
-
-## License
-
-This project is open source and available under the MIT License.
+The service validates the URL before storing it and rejects invalid or unreachable URLs with a `400 Bad Request` response.

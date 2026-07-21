@@ -70,12 +70,12 @@ func Shortenhandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// Set 5-minute expiry for guest URLs, no expiry for registered users
+	// Set 2-minute expiry for guest URLs, no expiry for registered users
 	var expiry sql.NullTime
 
 	if userID == "guest" {
 		expiry = sql.NullTime{
-			Time:  time.Now().UTC().Add(1 * time.Minute),
+			Time:  time.Now().UTC().Add(2 * time.Minute),
 			Valid: true,
 		}
 	} else {

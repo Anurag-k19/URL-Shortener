@@ -18,14 +18,22 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	val, err := storage.RDB.Get(storage.CTX, shortId).Result()
+
+	if err == nil {
+		// cache hit
+		http.Redirect(w, r, val, http.StatusFound)
+		return
+	}
+
 	// Look up short URL in database
 	var data struct {
 		LongURL   string
 		ExpiresAt sql.NullTime
 	}
 	row := storage.DB.QueryRow("SELECT long_url, expires_at FROM urls WHERE short_id = $1", shortId)
-	err := row.Scan(&data.LongURL, &data.ExpiresAt)
-	if err != nil {
+	err1 := row.Scan(&data.LongURL, &data.ExpiresAt)
+	if err1 != nil {
 		http.Error(w, "URL not Found", http.StatusNotFound)
 		return
 	}
@@ -37,6 +45,7 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Link expired", http.StatusGone)
 		return
 	}
+	storage.RDB.Set(storage.CTX, shortId, data.LongURL, 10*time.Minute)
 
 	http.Redirect(w, r, data.LongURL, http.StatusFound)
 

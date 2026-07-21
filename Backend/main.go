@@ -10,6 +10,7 @@ import (
 // main starts the HTTP server and registers route handlers
 func main() {
 	storage.InitDB()
+	storage.InitRedis()
 	// Register POST /shorten endpoint for creating short URLs
 	http.HandleFunc("/shorten", handlers.Shortenhandler)
 	// Register GET / endpoint for redirecting to original URLs
