@@ -1,59 +1,194 @@
 # URL Shortener
 
-A lightweight Go-based URL shortening service that converts long links into short, shareable URLs and redirects them back to the original destination.
+This project is a full-stack URL shortening application built with a Go backend and a framework-free frontend. It lets users shorten long URLs, store them securely in PostgreSQL, and redirect visitors to the original destination through a short link.
 
-## What the API is for
+## Project Overview
 
-The API is used to:
+The application is split into two main parts:
 
-- Create a short URL from a long URL
-- Redirect a short URL back to the original URL
-- Keep track of guest and user-specific links
-- Cache redirects in Redis for faster lookups
+- Backend: a Go server that handles URL creation, validation, storage, and redirection
+- Frontend: a lightweight static web app that provides the user interface for submitting URLs and viewing the generated short link
 
-## How it works
+The app is designed to work locally with PostgreSQL for persistent storage and Redis for fast lookup and caching of redirects.
 
-1. A client sends a long URL to the shorten endpoint.
-2. The server validates the URL and checks whether it is reachable.
-3. A short ID is generated and stored in PostgreSQL.
-4. The client receives a short URL that can be used later.
-5. When the short URL is visited, the server redirects the user to the original URL.
+## What the app does
 
-## Project structure
+Users can:
+
+- enter a long URL in the frontend
+- submit it to the backend
+- receive a short URL in return
+- open that short URL in the browser
+- get redirected to the original destination
+
+The backend validates the URL before saving it and ensures that invalid or unreachable URLs are rejected.
+
+## Main Features
+
+- URL shortening and redirection
+- Validation of submitted URLs
+- PostgreSQL-backed persistence
+- Redis caching for faster redirects
+- Guest link expiry after 2 minutes
+- CORS support for local frontend-to-backend communication
+- Simple static frontend with no framework dependency
+
+## Project Structure
 
 ```text
-.
-├── main.go
-├── handlers/
-│   ├── shorten.go
-│   └── redirect.go
-├── storage/
-│   ├── db.go
-│   └── redis.go
-├── utils/
-│   ├── generator.go
-│   └── validateURL.go
-└── go.mod
+URL Shortner/
+├── Backend/
+│   ├── main.go
+│   ├── go.mod
+│   ├── handlers/
+│   │   ├── shorten.go
+│   │   └── redirect.go
+│   ├── storage/
+│   │   ├── db.go
+│   │   └── redis.go
+│   └── utils/
+│       ├── generator.go
+│       └── validateURL.go
+└── Frontend/
+    ├── index.html
+    ├── css/
+    └── js/
 ```
 
-## API endpoints
+## Backend Flow
 
-### 1) Create a short URL
+### 1. Shortening a URL
 
-Endpoint:
+When a user submits a long URL from the frontend:
 
-```http
-POST /shorten
+1. The request is sent to the backend endpoint `/shorten`
+2. The backend validates the URL
+3. It checks whether the URL is reachable
+4. A unique short ID is generated
+5. The mapping is stored in PostgreSQL
+6. The backend returns a short URL such as:
+
+```text
+http://localhost:8000/redirect?code=ABC123
 ```
 
-Use this endpoint when you want to shorten a long URL.
+### 2. Redirecting the short URL
 
-Headers:
+When the user opens the short URL:
 
-- `Content-Type: application/json`
-- `X-User-ID` (optional): if provided, the URL is associated with that user; otherwise it is treated as a guest link
+1. The browser requests `/redirect?code=ABC123`
+2. The backend checks the short code in the database
+3. If the link is still valid, it redirects the browser to the original URL
+4. If the link has expired, it returns an expired-link response
+5. Redis is used to cache the redirect for quick repeated access
 
-Request body:
+## Frontend Flow
+
+The frontend is a static web app built with plain HTML, CSS, and JavaScript.
+
+It provides:
+
+- a text input for the long URL
+- a submit button to create the short URL
+- a result area to display the generated short link
+- a simple user experience without needing a framework
+
+The frontend communicates with the backend through the API layer in the JavaScript files under the Frontend/js folder.
+
+## Technologies Used
+
+- Go for the backend server and request handling
+- PostgreSQL for persistent storage of URL mappings
+- Redis for caching and faster redirect lookup
+- HTML, CSS, and JavaScript for the frontend
+- Docker (optional) for running Redis
+
+## Setup Instructions
+
+### 1. Install prerequisites
+
+Make sure you have:
+
+- Go installed
+- PostgreSQL installed and running
+- Redis installed or available via Docker
+- Python 3 for serving the frontend locally
+
+### 2. Create the PostgreSQL database
+
+Run the following in PostgreSQL:
+
+```sql
+CREATE DATABASE url_shortener;
+```
+
+Then create the table:
+
+```sql
+CREATE TABLE urls (
+    id SERIAL PRIMARY KEY,
+    short_id TEXT UNIQUE NOT NULL,
+    long_url TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    expires_at TIMESTAMP NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 3. Start Redis
+
+If you are using Docker:
+
+```bash
+docker run -d --name redis -p 6379:6379 redis:latest
+```
+
+### 4. Configure the backend environment
+
+Create a `.env` file inside the Backend folder:
+
+```env
+DB_USER=postgres
+PASSWORD=your_password
+DBNAME=url_shortener
+SSLMODE=disable
+DB_HOST=localhost
+DB_PORT=5432
+```
+
+### 5. Run the backend
+
+```bash
+cd Backend
+go run .
+```
+
+The backend runs on:
+
+```text
+http://localhost:8000
+```
+
+### 6. Run the frontend
+
+```bash
+cd Frontend
+python -m http.server 5500
+```
+
+Then open:
+
+```text
+http://localhost:5500
+```
+
+## API Endpoints
+
+### POST /shorten
+
+Used to shorten a long URL.
+
+Example request:
 
 ```json
 {
@@ -61,98 +196,21 @@ Request body:
 }
 ```
 
-Response:
+Example response:
 
 ```json
 {
-  "short_url": "http://localhost:8000/abc123"
+  "short_url": "http://localhost:8000/redirect?code=ABC123"
 }
 ```
 
-Behavior:
+### GET /redirect?code=ABC123
 
-- Guest links expire after 2 minutes.
-- User-linked links do not expire.
-- If the same user submits the same long URL again, the service returns the existing short URL instead of creating a duplicate.
-
-### 2) Redirect to the original URL
-
-Endpoint:
-
-```http
-GET /{shortId}
-```
-
-Use this endpoint when a user opens a shortened link.
-
-Behavior:
-
-- If the short ID exists in Redis, the redirect is served quickly.
-- Otherwise, the server looks it up in PostgreSQL.
-- If the URL is not found, the API returns `404 Not Found`.
-- If the link has expired, it returns `410 Gone`.
-- If the link is valid, it returns `302 Found` and redirects the browser.
-
-## Example usage
-
-### Create a short URL
-
-```bash
-curl -X POST http://localhost:8000/shorten \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.example.com"}'
-```
-
-### Create a short URL for a specific user
-
-```bash
-curl -X POST http://localhost:8000/shorten \
-  -H "Content-Type: application/json" \
-  -H "X-User-ID: user123" \
-  -d '{"url":"https://www.example.com"}'
-```
-
-### Open a shortened URL
-
-```bash
-curl -i http://localhost:8000/abc123
-```
-
-## Setup and running
-
-### Prerequisites
-
-- Go installed
-- PostgreSQL running
-- Redis running on `localhost:6379`
-
-### Environment variables
-
-Create a `.env` file in the project root with values similar to:
-
-```env
-DB_USER=your_postgres_user
-PASSWORD=your_postgres_password
-DBNAME=url_shortener
-SSLMODE=disable
-DB_HOST=localhost
-DB_PORT=5432
-```
-
-### Run the server
-
-```bash
-go run main.go
-```
-
-The server listens on `http://localhost:8000`.
-
-## Storage details
-
-- PostgreSQL stores the mapping between short IDs and original URLs.
-- Redis is used as a temporary cache for redirects.
-- Guest URLs are marked with an expiry time; user URLs are stored without an expiry.
+Used to redirect the browser to the original URL.
 
 ## Notes
 
-The service validates the URL before storing it and rejects invalid or unreachable URLs with a `400 Bad Request` response.
+- Guest-created links expire after 2 minutes.
+- Registered or user-specific links do not have an expiry.
+- The app uses Redis as a cache layer and PostgreSQL as the source of truth.
+- CORS is enabled for local development so the frontend can communicate with the backend in the browser.

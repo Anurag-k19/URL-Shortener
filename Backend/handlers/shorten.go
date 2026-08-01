@@ -56,7 +56,7 @@ func Shortenhandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&existingID)
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/" + existingID})
+		json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/redirect?code=" + existingID})
 		return
 	}
 
@@ -95,7 +95,7 @@ func Shortenhandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Stored:", shortId, "→", req.URL)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/" + shortId})
+	json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/redirect?code=" + shortId})
 	fmt.Println("Received url: ", req.URL)
 
 }
