@@ -1,6 +1,6 @@
 module url_shortner
 
-go 1.26.1
+go 1.26.9
 
 require (
 	github.com/joho/godotenv v1.5.1
