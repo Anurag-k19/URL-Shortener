@@ -3,15 +3,18 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"url_shortner/auth"
 	"url_shortner/handlers"
 	"url_shortner/storage"
 )
 
-func newRouter(shortenHandler, redirectHandler http.HandlerFunc) http.Handler {
+func newRouter(shortenHandler, redirectHandler, registrationHandler, loginHandler http.HandlerFunc) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/shorten", shortenHandler)
-	mux.HandleFunc("/redirect", redirectHandler)
-	mux.HandleFunc("/", redirectHandler)
+	mux.Handle("/register", registrationHandler)
+	mux.Handle("/login", loginHandler)
+	mux.Handle("/shorten", shortenHandler)
+	mux.Handle("/redirect", redirectHandler)
+	mux.Handle("/", redirectHandler)
 	return corsMiddleware(mux)
 }
 
@@ -44,7 +47,7 @@ func main() {
 	storage.InitDB()
 	storage.InitRedis()
 
-	router := newRouter(handlers.Shortenhandler, handlers.RedirectHandler)
+	router := newRouter(handlers.ShortenHandler, handlers.RedirectHandler, auth.RegistrationHandler, auth.LoginHandler)
 	fmt.Printf("Server is running on port 8000......    \n\n ")
 	http.ListenAndServe(":8000", router)
 }

@@ -1,262 +1,278 @@
 # Snip frontend
 
-A framework-free, API-first frontend for a Go URL-shortening backend. Open it through a static web server; ES modules do not work reliably from `file://` URLs.
+This frontend is a framework-free, API-first web app that talks to the Go backend for URL shortening and redirecting. It is intentionally simple: plain HTML, CSS, and JavaScript are used, and the app is loaded as an ES module from the browser.
 
-## Run locally
+## How the frontend is structured
 
-The frontend is plain HTML, CSS, and JavaScript. Python is not an application
-dependency; the following command only serves the static files during development:
+The frontend is organized as a small layered application:
 
-```sh
-python3 -m http.server 5500
-```
+- Pages contain user-facing behavior and event handlers
+- Services handle API requests and response normalization
+- The client layer is the only place that calls the browser fetch API
+- Shared state stores runtime UI values
+- UI components render reusable elements such as navbar, toast, and modal
 
-Then visit `http://localhost:5500`. The API defaults to `http://localhost:8080`.
+The main files are:
 
-You can instead use VS Code Live Server or any other static file server.
+- [index.html](index.html) – the entry HTML page
+- [js/app.js](js/app.js) – application bootstrap
+- [js/pages/home.js](js/pages/home.js) – the main page behavior
+- [js/api/url.service.js](js/api/url.service.js) – URL shortening API logic
+- [js/api/client.js](js/api/client.js) – centralized HTTP client
+- [js/config.js](js/config.js) – app and API configuration
+- [js/state/store.js](js/state/store.js) – shared UI state
+- [js/utils/validators.js](js/utils/validators.js) – input validation
+- [js/utils/clipboard.js](js/utils/clipboard.js) – copy-to-clipboard helper
 
-## Backend contract
+## How the app starts
 
-The frontend currently sends:
+When the browser opens [index.html](index.html), it loads [js/app.js](js/app.js) as an ES module.
 
-```http
-POST /shorten
-Content-Type: application/json
+That bootstrap file performs three main tasks:
 
-{"url":"https://example.com/a/long/path"}
-```
+1. It finds the root containers in the HTML document
+2. It creates the toast system and navigation UI
+3. It renders the home page
 
-The response may use any of these common shapes:
-
-```json
-{"short_url":"http://localhost:8080/redirect?code=abc123","code":"abc123"}
-```
-
-```json
-{"shortUrl":"http://localhost:8080/redirect?code=abc123","shortCode":"abc123"}
-```
-
-```json
-{"code":"abc123"}
-```
-
-When only a code is returned, the frontend produces `/redirect?code=abc123`. If your Go endpoint expects a path parameter or a different query name, change only `getRedirectUrl()` in `js/api/url.service.js`.
-
-The Go server must allow the frontend origin through CORS, including `POST`, `Content-Type`, and later `Authorization` headers. CORS permission is controlled by the server; browser JavaScript cannot grant it.
-
-## Configuration
-
-Change the `api-base-url` meta tag in `index.html` per environment. All endpoint paths, timeouts, and retry defaults live in `js/config.js`.
-
-Only `js/api/client.js` calls `fetch()`. Pages and components call service functions, and services call the centralized client. Authentication can later register a JWT provider through `setAuthTokenProvider()` without changing feature components.
-
-## How the application works end to end
-
-### 1. The browser starts the application
-
-The browser loads `index.html`, which provides three root elements:
-
-- `#navbar-root` for the navigation bar.
-- `#app` for the current page.
-- `#toast-root` for success and error notifications.
-
-At the bottom of the document, `index.html` loads `js/app.js` as an ES module:
-
-```html
-<script type="module" src="./js/app.js"></script>
-```
-
-`app.js` is the application entry point. It finds the root elements, creates the
-toast manager, renders the navigation bar, and renders the home page. No backend
-request is made during this initial rendering.
+The startup flow looks like this:
 
 ```text
 index.html
-    -> js/app.js
-        -> components/navbar.js
-        -> components/toast.js
-        -> pages/home.js
+  -> app.js
+    -> navbar component
+    -> toast component
+    -> home page
 ```
 
-### 2. The user submits a long URL
+No backend request is made during initial page load. The page is rendered first, and the user interaction begins only after that.
 
-The form and its event handlers live in `js/pages/home.js`. When the form is
-submitted, the page prevents the browser's normal form submission and passes the
-input to `validateUrl()` from `js/utils/validators.js`.
+## How the user flow works
 
-The validator checks that:
+### 1. User opens the page
 
-- A value was entered.
-- It is not longer than 2,048 characters.
-- It is a complete URL.
-- It uses `http://` or `https://`.
+The browser loads [index.html](index.html), which contains placeholders such as:
 
-Invalid input stays in the browser. The page displays an accessible error and does
-not contact the backend.
+- a navbar root
+- an app root
+- a toast root
+
+These are then populated by the JavaScript modules.
+
+### 2. User submits a URL
+
+When the user enters a long URL and submits the form, the logic in [js/pages/home.js](js/pages/home.js) runs.
+
+That file:
+
+- prevents the browser from doing a normal form submission
+- reads the input value
+- sends it to the validator in [js/utils/validators.js](js/utils/validators.js)
+
+The validator checks that the URL:
+
+- is not empty
+- is not too long
+- has a valid URL format
+- uses http or https
+
+If validation fails, the page shows an inline error and does not call the backend.
 
 ### 3. The page calls the URL service
 
-For valid input, `home.js` calls:
+When validation succeeds, [js/pages/home.js](js/pages/home.js) calls a service function from [js/api/url.service.js](js/api/url.service.js):
 
 ```js
 const shortened = await createShortUrl(validation.value);
 ```
 
-`createShortUrl()` belongs to `js/api/url.service.js`. This service knows which
-backend endpoint is needed and converts the page's value into the backend request
-body:
+This service is responsible for converting the page input into the shape expected by the backend. It does not render UI, and it does not directly interact with the browser fetch API.
+
+### 4. The service calls the centralized HTTP client
+
+The URL service then calls [js/api/client.js](js/api/client.js), which is the single place in the frontend that uses fetch.
+
+That file:
+
+- builds the final request URL from the base URL and endpoint
+- adds JSON headers
+- serializes the request body
+- sets a timeout using AbortController
+- handles retry rules for safe requests
+- converts network failures into an API error object
+
+In other words, the frontend uses a strict layering rule:
+
+```text
+Page -> Service -> HTTP client -> Backend
+```
+
+### 5. The backend responds
+
+The backend returns a JSON response containing a short URL. The service then normalizes that response into a frontend-friendly object.
+
+That normalization step is important because the frontend should not depend on the exact field names used by the backend. The service ensures the UI always receives a consistent structure.
+
+### 6. The page updates the UI
+
+After the service returns, [js/pages/home.js](js/pages/home.js) updates the shared state in [js/state/store.js](js/state/store.js) and renders the result in the page.
+
+The UI flow is:
+
+1. store the short link result
+2. update the link text and href
+3. show the success card
+4. reset the button from the loading state
+5. show a success toast
+
+## How the frontend calls the backend
+
+The call chain is:
+
+```text
+index.html
+  -> app.js
+    -> home page
+      -> validators.js
+      -> url.service.js
+        -> client.js
+          -> fetch() to backend
+```
+
+The backend endpoint used for creating a short URL is:
+
+```http
+POST /shorten
+```
+
+The frontend sends JSON like this:
 
 ```json
 {
-  "url": "https://example.com/a/long/path"
+  "url": "https://example.com/very/long/url"
 }
 ```
 
-The page does not know that the endpoint is `/shorten`, and the service does not
-render any HTML.
+The response is then used to create the short link shown to the user.
 
-### 4. The centralized client contacts the Go backend
+## How the redirect flow works
 
-`url.service.js` passes the request to `apiClient.post()` in
-`js/api/client.js`. This is the only file allowed to call `fetch()`.
+After the user receives a short link, opening it in the browser sends a request directly to the backend.
 
-Before sending the request, the client:
+That request is not handled by the frontend anymore. The browser simply visits the URL and the backend responds with an HTTP redirect to the original destination.
 
-- Combines the API base URL with `/shorten`.
-- Adds `Accept: application/json` and `Content-Type: application/json`.
-- Serializes the request body as JSON.
-- Starts a timeout using `AbortController`.
-- Uses browser CORS mode.
-- Adds a bearer token in the future when an auth token provider is registered.
-
-With the default configuration, the resulting request is:
-
-```http
-POST http://localhost:8080/shorten
-Accept: application/json
-Content-Type: application/json
-
-{"url":"https://example.com/a/long/path"}
-```
-
-POST requests are not automatically retried because repeating a creation request
-can create duplicate records. The client supports safe automatic retries for
-idempotent requests such as GET.
-
-### 5. The Go backend creates the short URL
-
-The Go backend validates and stores the URL, creates a code, and returns JSON. It
-is the single source of truth; the frontend does not create or persist shortened
-URLs itself.
-
-The URL service accepts common Go response naming styles. For example:
-
-```json
-{
-  "short_url": "http://localhost:8080/redirect?code=abc123",
-  "code": "abc123"
-}
-```
-
-`normalizeShortenResponse()` in `url.service.js` converts the backend response to
-one stable frontend shape:
-
-```js
-{
-  id: "abc123",
-  code: "abc123",
-  shortUrl: "http://localhost:8080/redirect?code=abc123",
-  originalUrl: null,
-  createdAt: null,
-}
-```
-
-This normalization prevents backend field-name changes from spreading into UI
-components.
-
-If the backend returns only a code, `getRedirectUrl()` constructs the public URL
-using the configured `/redirect` endpoint.
-
-### 6. The page displays the result
-
-After the service resolves, `home.js`:
-
-1. Stores the normalized result in `js/state/store.js`.
-2. Updates the result link's text and `href`.
-3. Makes the result card visible.
-4. Restores the submit button from its loading state.
-5. Shows a success toast.
-
-The state store contains runtime UI state only. It does not replace backend data
-or treat browser storage as the source of truth.
-
-### 7. Copying and opening the short URL
-
-When the user selects **Copy link**, `home.js` reads the result from the store and
-calls `copyText()` in `js/utils/clipboard.js`. That utility uses the browser
-Clipboard API and includes a fallback for older browsers.
-
-When somebody opens the copied link, their browser requests the Go backend:
-
-```http
-GET http://localhost:8080/redirect?code=abc123
-```
-
-The Go backend looks up `abc123` and returns an HTTP redirect to the original URL.
-The frontend is not involved in this visit. If your backend instead uses a path
-such as `/redirect/abc123`, update only `getRedirectUrl()` in
-`js/api/url.service.js`.
-
-### 8. Errors and timeouts
-
-The HTTP client parses successful JSON responses and converts failures into a
-consistent `ApiError`. It provides useful messages for:
-
-- Network failures.
-- Request timeouts.
-- Backend validation errors.
-- Rate limits.
-- Server errors.
-
-The error travels back through the same layers:
+The redirect path is:
 
 ```text
-Go backend or network
-    -> api/client.js
-        -> api/url.service.js
-            -> pages/home.js
-                -> inline error + error toast
+Browser opens short URL
+  -> backend /redirect route
+    -> checks database and Redis
+    -> redirects to original URL
 ```
 
-Pages decide how an error should look. The client decides how an HTTP failure is
-represented. This keeps networking and presentation concerns separate.
+## How the frontend is configured
 
-### Complete shortening flow
+The app gets its API base URL from the meta tag in [index.html](index.html). The configuration is loaded from [js/config.js](js/config.js).
+
+That config file defines:
+
+- the API base URL
+- endpoint paths such as /shorten and /redirect
+- timeout values
+- retry behavior
+
+This makes it easy to change the backend address without editing every page or component.
+
+## Backend integration summary
+
+The frontend is intentionally simple and follows a clean separation of concerns:
+
+- UI pages handle interaction and display
+- Services handle API contracts
+- The client handles networking
+- Shared state stores temporary UI state
+
+This design is useful because if the backend response shape changes, only the service layer needs to be updated instead of the entire UI.
+
+## How the backend works
+
+The backend is implemented in the Go files under [../Backend](../Backend).
+
+### Main entry point
+
+The server is started in [../Backend/main.go](../Backend/main.go). It:
+
+- initializes PostgreSQL and Redis
+- creates the router
+- registers the shorten and redirect handlers
+- starts the HTTP server on port 8000
+
+### Request routing
+
+The router in [../Backend/main.go](../Backend/main.go) routes requests to two main handlers:
+
+- /shorten → handled by [../Backend/handlers/shorten.go](../Backend/handlers/shorten.go)
+- /redirect → handled by [../Backend/handlers/redirect.go](../Backend/handlers/redirect.go)
+
+### Shorten handler
+
+The shorten handler in [../Backend/handlers/shorten.go](../Backend/handlers/shorten.go) receives the POST request from the frontend.
+
+It performs these steps:
+
+1. checks that the request method is POST
+2. reads the URL from the JSON body
+3. validates the URL
+4. verifies that the URL is reachable
+5. generates a short ID
+6. stores the short URL mapping in PostgreSQL
+7. returns the generated short URL to the frontend
+
+### Redirect handler
+
+The redirect handler in [../Backend/handlers/redirect.go](../Backend/handlers/redirect.go) handles browser requests for the short URL.
+
+It:
+
+1. reads the short code from the query parameter or path
+2. checks the database for the mapping
+3. validates whether the link is still active based on the expiry logic
+4. checks Redis for a cached redirect
+5. redirects the browser to the original URL if the link is valid
+
+### Storage layer
+
+The backend uses two storage systems:
+
+- [../Backend/storage/db.go](../Backend/storage/db.go) for PostgreSQL connection and initialization
+- [../Backend/storage/redis.go](../Backend/storage/redis.go) for Redis connection and cache access
+
+PostgreSQL is the source of truth for the URL mapping, while Redis is used as a temporary cache layer for faster access.
+
+## End-to-end architecture summary
+
+Here is the full call chain:
 
 ```text
-User submits URL
-    -> home.js validates it
-        -> url.service.js creates the request
-            -> client.js sends POST /shorten
-                -> Go backend stores URL and returns code
-            <- client.js parses the JSON response
-        <- url.service.js normalizes the response
-    <- home.js updates state and displays the short link
-User copies or opens link
-    -> browser requests GET /redirect?code=...
-        -> Go backend redirects to the original URL
+User types URL in browser
+  -> home page validates input
+  -> url service builds request
+  -> HTTP client sends POST /shorten
+  -> Go backend stores the URL in PostgreSQL
+  -> backend returns short URL to frontend
+  -> frontend displays the short link
+
+User opens short link
+  -> browser requests /redirect?code=...
+  -> backend checks database and Redis
+  -> backend redirects to original URL
 ```
 
-### Configuration and CORS
+## Important notes
 
-The API host comes from the `api-base-url` meta tag in `index.html`. `js/config.js`
-reads it once and exposes the base URL, endpoint paths, timeout, and retry settings
-to the API layer.
-
-CORS must be configured in the Go backend. For local development, the backend
-should allow the frontend origin (normally `http://localhost:5500`), the required
-HTTP methods, and the `Content-Type` header. Add the `Authorization` header to the
-backend's CORS configuration when authentication is introduced.
+- The frontend must be served from a static server such as Python http.server or Live Server.
+- The backend runs on port 8000.
+- The frontend runs on port 5500 locally.
+- CORS must be enabled in the backend so the browser can make requests from the static frontend.
 
 ## Where to add new features
 

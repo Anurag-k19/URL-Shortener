@@ -1,0 +1,37 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "Frontend/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "Frontend/**"
+      - ".github/workflows/frontend.yml"
+
+defaults:
+  run:
+    working-directory: Frontend
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install lint tools
+        run: npm install --no-save --no-package-lock eslint@9 @eslint/js@9 globals@15 html-validate@9
+
+      - name: Lint JavaScript
+        run: npx eslint js
+
+      - name: Validate HTML
+        run: npx html-validate index.html

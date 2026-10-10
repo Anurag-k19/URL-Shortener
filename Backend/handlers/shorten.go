@@ -16,7 +16,7 @@ type Request struct {
 }
 
 // Shortenhandler handles POST requests to create short URLs with optional expiry for guests
-func Shortenhandler(w http.ResponseWriter, r *http.Request) {
+func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method is Allowed", http.StatusMethodNotAllowed)
 		return
