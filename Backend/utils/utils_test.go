@@ -1,8 +1,7 @@
 package utils
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +19,19 @@ func TestValidateURL(t *testing.T) {
 		{"ftp scheme", "ftp://example.com/file", false},
 		{"javascript scheme", "javascript:alert(1)", false},
 		{"plain text", "not a url", false},
+		{"google sheets", "https://docs.google.com/spreadsheets/d/abc", true},
+		{"uppercase scheme", "HTTPS://EXAMPLE.COM", true},
+		{"script in path is just text", "https://example.com/<script>", true},
+		{"data url", "data:text/html,<script>alert(1)</script>", false},
+		{"file url", "file:///etc/passwd", false},
+		{"mailto", "mailto:a@b.com", false},
+		{"no host", "http://", false},
+		{"empty host with path", "https:///path", false},
+		{"userinfo trick", "https://google.com@evil.com", false},
+		{"max length", "https://example.com/" + strings.Repeat("a", 2048-len("https://example.com/")), true},
+		{"too long", "https://example.com/" + strings.Repeat("a", 3000), false},
+		{"own short link", "http://localhost:8000/redirect?code=abc", false},
+		{"own short link by ip", "http://127.0.0.1:8000/abc", false},
 	}
 
 	for _, tt := range tests {
@@ -29,42 +41,6 @@ func TestValidateURL(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestIsreachable(t *testing.T) {
-	tests := []struct {
-		name   string
-		status int
-		want   bool
-	}{
-		{"200 ok", http.StatusOK, true},
-		{"301 redirect", http.StatusMovedPermanently, true},
-		{"404 not found", http.StatusNotFound, false},
-		{"500 server error", http.StatusInternalServerError, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.status)
-			}))
-			defer srv.Close()
-
-			if got := Isreachable(srv.URL); got != tt.want {
-				t.Errorf("Isreachable() with status %d = %v, want %v", tt.status, got, tt.want)
-			}
-		})
-	}
-
-	t.Run("unreachable host", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		url := srv.URL
-		srv.Close()
-
-		if Isreachable(url) {
-			t.Errorf("Isreachable(%q) = true for a closed server, want false", url)
-		}
-	})
 }
 
 func TestGenerateShortId(t *testing.T) {

@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 	"url_shortner/auth"
 	"url_shortner/handlers"
 	"url_shortner/storage"
@@ -46,6 +48,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 func main() {
 	storage.InitDB()
 	storage.InitRedis()
+	if err := storage.EnsurePartitions(); err != nil {
+		log.Fatal("could not create monthly partitions: ", err)
+	}
+	storage.StartPartitionMaintenance(24 * time.Hour)
 
 	router := newRouter(handlers.ShortenHandler, handlers.RedirectHandler, auth.RegistrationHandler, auth.LoginHandler)
 	fmt.Printf("Server is running on port 8000......    \n\n ")

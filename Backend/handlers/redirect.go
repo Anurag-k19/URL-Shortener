@@ -30,7 +30,7 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		LongURL   string
 		ExpiresAt sql.NullTime
 	}
-	row := storage.DB.QueryRow("SELECT long_url, expires_at FROM urls WHERE short_id = $1", shortId)
+	row := storage.DB.QueryRow("SELECT long_url, expires_at FROM short_urls WHERE short_id = $1", shortId)
 	err1 := row.Scan(&data.LongURL, &data.ExpiresAt)
 	if err1 != nil {
 		http.Error(w, "URL not Found", http.StatusNotFound)
@@ -38,9 +38,8 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println("[DEBUG] Short ID:", shortId, "| ExpiresAt Valid:", data.ExpiresAt.Valid, "| ExpiresAt Time:", data.ExpiresAt.Time, "| Now:", time.Now())
 
-	// Check if URL has expired and delete it from the database and cache if necessary.
+	// Block expired links and clear them from the cache. The row stays in the database for monthly analysis.
 	if data.ExpiresAt.Valid && time.Now().UTC().After(data.ExpiresAt.Time) {
-		storage.DB.Exec("DELETE FROM urls WHERE short_id = $1", shortId)
 		storage.RDB.Del(storage.CTX, shortId)
 		http.Error(w, "Link expired", http.StatusGone)
 		return

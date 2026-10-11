@@ -1,14 +1,21 @@
 package utils
 
 import (
-	"net/http"
 	"net/url"
-	"time"
+	"strings"
 )
 
-func ValidateURL(rawUrl string) bool {
+const maxURLLength = 2048
 
-	parsed, err := url.ParseRequestURI(rawUrl)
+// ownHosts are the hosts that serve our own short links; shortening them would create chains or loops.
+var ownHosts = map[string]bool{"localhost": true, "127.0.0.1": true}
+
+func ValidateURL(rawURL string) bool {
+	if rawURL == "" || len(rawURL) > maxURLLength {
+		return false
+	}
+
+	parsed, err := url.ParseRequestURI(rawURL)
 
 	if err != nil {
 		return false
@@ -18,20 +25,18 @@ func ValidateURL(rawUrl string) bool {
 		return false
 	}
 
-	return true
-}
-
-func Isreachable(url string) bool {
-	client := http.Client{
-		Timeout: 3 * time.Second,
-	}
-
-	resp, err := client.Head(url)
-
-	if err != nil {
+	if parsed.Hostname() == "" {
 		return false
 	}
-	defer resp.Body.Close()
 
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
+	// Reject userinfo like https://google.com@evil.com, which hides the real destination.
+	if parsed.User != nil {
+		return false
+	}
+
+	if ownHosts[strings.ToLower(parsed.Hostname())] {
+		return false
+	}
+
+	return true
 }

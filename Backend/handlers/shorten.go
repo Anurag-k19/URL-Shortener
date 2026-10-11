@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 	"url_shortner/storage"
 	"url_shortner/utils"
@@ -29,7 +30,8 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		userID = "guest"
 	}
 
-	// Parse JSON request body
+	// Parse JSON request body, capped at 4 KB so oversized payloads are rejected
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req Request
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -38,20 +40,16 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.URL = strings.TrimSpace(req.URL)
 	if !utils.ValidateURL(req.URL) {
 		http.Error(w, "Invalid URL ", http.StatusBadRequest)
 		return
 	}
 
-	if !utils.Isreachable(req.URL) {
-		http.Error(w, "Invalid URL: Not Reachable", http.StatusBadRequest)
-		return
-	}
-
-	// Check if user already shortened this URL
+	// Reuse the user's existing short link for this URL if it hasn't expired
 	var existingID string
 	err = storage.DB.QueryRow(
-		"SELECT short_id from urls WHERE user_id =$1 AND long_url=$2",
+		"SELECT short_id FROM short_urls WHERE user_id = $1 AND long_url = $2 AND (expires_at IS NULL OR expires_at > NOW())",
 		userID, req.URL,
 	).Scan(&existingID)
 	if err == nil {
@@ -65,7 +63,7 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		shortId = utils.GenerateShortId()
 		var count int
-		err = storage.DB.QueryRow("SELECT COUNT(*) FROM urls WHERE short_id = $1", shortId).Scan(&count)
+		err = storage.DB.QueryRow("SELECT COUNT(*) FROM short_urls WHERE short_id = $1", shortId).Scan(&count)
 		if err != nil || count == 0 {
 			break
 		}
@@ -85,7 +83,7 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	var createdAt = time.Now().UTC()
 	// Store URL in PostgreSQL database
 	_, err = storage.DB.Exec(
-		"INSERT INTO urls (short_id, long_url, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)",
+		"INSERT INTO short_urls (short_id, long_url, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)",
 		shortId, req.URL, userID, expiry, createdAt,
 	)
 	if err != nil {
