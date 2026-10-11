@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"url_shortner/storage"
@@ -14,6 +15,16 @@ import (
 // Request represents the JSON payload for URL shortening
 type Request struct {
 	URL string `json:"url"`
+}
+
+// shortURL builds the public short link, e.g. http://localhost:8000/fkI30S.
+// Set BASE_URL in .env to your short domain in production.
+func shortURL(id string) string {
+	base := strings.TrimSuffix(os.Getenv("BASE_URL"), "/")
+	if base == "" {
+		base = "http://localhost:8000"
+	}
+	return base + "/" + id
 }
 
 // Shortenhandler handles POST requests to create short URLs with optional expiry for guests
@@ -54,7 +65,7 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&existingID)
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/redirect?code=" + existingID})
+		json.NewEncoder(w).Encode(map[string]string{"short_url": shortURL(existingID)})
 		return
 	}
 
@@ -93,7 +104,7 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Stored:", shortId, "→", req.URL)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"short_url": "http://localhost:8000/redirect?code=" + shortId})
+	json.NewEncoder(w).Encode(map[string]string{"short_url": shortURL(shortId)})
 	fmt.Println("Received url: ", req.URL)
 
 }

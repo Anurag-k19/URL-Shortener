@@ -143,6 +143,7 @@ DBNAME=url_shortener
 SSLMODE=disable
 DB_HOST=localhost
 DB_PORT=5432
+BASE_URL=http://localhost:8000   # optional: the domain used in returned short links
 ```
 
 ### Database setup
