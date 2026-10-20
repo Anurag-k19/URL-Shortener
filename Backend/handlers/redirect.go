@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 	"url_shortner/storage"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // RedirectHandler handles GET requests to redirect short URLs to their original destination
@@ -25,43 +28,49 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up short URL in database first so expiry rules are enforced before any cache is used.
-	var data struct {
-		LongURL   string
-		ExpiresAt sql.NullTime
+	// Serve from the Redis cache first. Cached entries expire when the link does (see ttl below),
+	// so a cache hit is always a live link and needs no database query.
+	longURL, err := storage.RDB.Get(r.Context(), shortId).Result()
+	if err == nil {
+		http.Redirect(w, r, longURL, http.StatusFound)
+		return
 	}
-	row := storage.DB.QueryRow("SELECT long_url, expires_at FROM short_urls WHERE short_id = $1", shortId)
-	err1 := row.Scan(&data.LongURL, &data.ExpiresAt)
-	if err1 != nil {
+	if !errors.Is(err, redis.Nil) {
+		log.Println("redirect: redis get failed:", err)
+	}
+
+	// Cache miss: look the link up in PostgreSQL.
+	var expiresAt sql.NullTime
+	err = storage.DB.QueryRowContext(r.Context(),
+		"SELECT long_url, expires_at FROM short_urls WHERE short_id = $1", shortId,
+	).Scan(&longURL, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "URL not Found", http.StatusNotFound)
 		return
 	}
-	fmt.Println("[DEBUG] Short ID:", shortId, "| ExpiresAt Valid:", data.ExpiresAt.Valid, "| ExpiresAt Time:", data.ExpiresAt.Time, "| Now:", time.Now())
+	if err != nil {
+		log.Println("redirect: database lookup failed:", err)
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+		return
+	}
 
-	// Block expired links and clear them from the cache. The row stays in the database for monthly analysis.
-	if data.ExpiresAt.Valid && time.Now().UTC().After(data.ExpiresAt.Time) {
-		storage.RDB.Del(storage.CTX, shortId)
+	// Block expired links. The row stays in the database for monthly analysis.
+	if expiresAt.Valid && time.Now().UTC().After(expiresAt.Time) {
 		http.Error(w, "Link expired", http.StatusGone)
 		return
 	}
 
-	if val, err := storage.RDB.Get(storage.CTX, shortId).Result(); err == nil {
-		// cache hit for a non-expired link
-		http.Redirect(w, r, val, http.StatusFound)
-		return
+	// Guest links are cached only until they expire; signed-in users' links for 10 minutes.
+	// A TTL of 0 would mean "never expire" in Redis, so only cache when there's time left.
+	ttl := 10 * time.Minute
+	if expiresAt.Valid {
+		ttl = time.Until(expiresAt.Time)
 	}
-
-	var ttl time.Duration
-	if data.ExpiresAt.Valid {
-		ttl = time.Until(data.ExpiresAt.Time)
-		if ttl < 0 {
-			ttl = 0
+	if ttl > 0 {
+		if err := storage.RDB.Set(r.Context(), shortId, longURL, ttl).Err(); err != nil {
+			log.Println("redirect: redis set failed:", err)
 		}
-	} else {
-		ttl = 10 * time.Minute
 	}
 
-	storage.RDB.Set(storage.CTX, shortId, data.LongURL, ttl)
-	http.Redirect(w, r, data.LongURL, http.StatusFound)
-
+	http.Redirect(w, r, longURL, http.StatusFound)
 }

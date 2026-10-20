@@ -61,6 +61,15 @@ func main() {
 	storage.StartPartitionMaintenance(24 * time.Hour)
 
 	router := newRouter(handlers.ShortenHandler, handlers.RedirectHandler, auth.GoogleLoginHandler, auth.GoogleCallbackHandler, auth.MeHandler, auth.LogoutHandler)
-	fmt.Printf("Server is running on port 8000......    \n\n ")
-	http.ListenAndServe(":8000", router)
+	server := &http.Server{
+		Addr:              ":8000",
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	fmt.Println("Server is running on port 8000")
+	log.Fatal(server.ListenAndServe())
 }
