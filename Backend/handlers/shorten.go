@@ -3,7 +3,9 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -69,15 +71,32 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"short_url": shortURL(existingID)})
 		return
 	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		log.Println("shorten: checking for existing link failed:", err)
+		http.Error(w, "Failed to store URL", http.StatusInternalServerError)
+		return
+	}
 
-	// Generate unique short ID by checking for collisions in database
+	// Generate a short ID that isn't taken yet. With 62^6 possible IDs a collision is very rare,
+	// so a few attempts are plenty; a database error stops the request instead of skipping the check.
 	var shortId string
-	for {
+	const maxAttempts = 5
+	for attempt := 1; ; attempt++ {
 		shortId = utils.GenerateShortId()
 		var count int
 		err = storage.DB.QueryRow("SELECT COUNT(*) FROM short_urls WHERE short_id = $1", shortId).Scan(&count)
-		if err != nil || count == 0 {
+		if err != nil {
+			log.Println("shorten: checking short id failed:", err)
+			http.Error(w, "Failed to store URL", http.StatusInternalServerError)
+			return
+		}
+		if count == 0 {
 			break
+		}
+		if attempt == maxAttempts {
+			log.Println("shorten: no free short id after", maxAttempts, "attempts")
+			http.Error(w, "Failed to store URL", http.StatusInternalServerError)
+			return
 		}
 	}
 	// Set 2-minute expiry for guest URLs, no expiry for registered users
