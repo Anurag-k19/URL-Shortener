@@ -77,7 +77,7 @@ export async function request(path, options = {}) {
       const response = await fetch(buildUrl(path, options.query), {
         method,
         mode: "cors",
-        credentials: options.credentials || "omit",
+        credentials: options.credentials || "include",
         headers: createHeaders(options.headers, hasBody),
         body: hasBody ? JSON.stringify(options.body) : undefined,
         signal: controller.signal,
