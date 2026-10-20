@@ -21,12 +21,16 @@ Users can:
 - open that short URL in the browser
 - get redirected to the original destination
 
-The backend validates the URL before saving it and ensures that invalid or unreachable URLs are rejected.
+Users can also sign in with Google. Signed-in users' links never expire; guest links expire after 2 minutes.
+
+The backend validates the URL before saving it and rejects invalid or unsafe URLs.
 
 ## Main Features
 
 - URL shortening and redirection
+- Google sign-in (OAuth 2.0 / OpenID Connect) with sessions stored in Redis
 - Validation of submitted URLs
+- Monthly partitioned link storage for analysis
 - PostgreSQL-backed persistence
 - Redis caching for faster redirects
 - Guest link expiry after 2 minutes
@@ -40,11 +44,14 @@ URL Shortner/
 ├── Backend/
 │   ├── main.go
 │   ├── go.mod
+│   ├── auth/          # Google sign-in, sessions, middleware
 │   ├── handlers/
 │   │   ├── shorten.go
 │   │   └── redirect.go
+│   ├── migrations/    # SQL schema, run in order
 │   ├── storage/
 │   │   ├── db.go
+│   │   ├── partitions.go
 │   │   └── redis.go
 │   └── utils/
 │       ├── generator.go
@@ -62,21 +69,21 @@ URL Shortner/
 When a user submits a long URL from the frontend:
 
 1. The request is sent to the backend endpoint `/shorten`
-2. The backend validates the URL
-3. It checks whether the URL is reachable
+2. The backend checks the `session` cookie: signed-in user or guest
+3. The backend validates the URL
 4. A unique short ID is generated
 5. The mapping is stored in PostgreSQL
 6. The backend returns a short URL such as:
 
 ```text
-http://localhost:8000/redirect?code=ABC123
+http://localhost:8000/ABC123
 ```
 
 ### 2. Redirecting the short URL
 
 When the user opens the short URL:
 
-1. The browser requests `/redirect?code=ABC123`
+1. The browser requests `/ABC123`
 2. The backend checks the short code in the database
 3. If the link is still valid, it redirects the browser to the original URL
 4. If the link has expired, it returns an expired-link response
@@ -91,6 +98,7 @@ It provides:
 - a text input for the long URL
 - a submit button to create the short URL
 - a result area to display the generated short link
+- a "Sign in with Google" button, and the signed-in user's name with a sign-out button
 - a simple user experience without needing a framework
 
 The frontend communicates with the backend through the API layer in the JavaScript files under the Frontend/js folder.
@@ -122,18 +130,15 @@ Run the following in PostgreSQL:
 CREATE DATABASE url_shortener;
 ```
 
-Then create the table:
+Then create the tables by running the migrations:
 
-```sql
-CREATE TABLE urls (
-    id SERIAL PRIMARY KEY,
-    short_id TEXT UNIQUE NOT NULL,
-    long_url TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    expires_at TIMESTAMP NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+```bash
+cd Backend
+psql -U postgres -d url_shortener -f migrations/001_create_short_urls.sql
+psql -U postgres -d url_shortener -f migrations/003_create_users.sql
 ```
+
+`002_migrate_urls_data.sql` is only for databases that still have the old `urls` table. See `Backend/README.md`.
 
 ### 3. Start Redis
 
@@ -154,7 +159,14 @@ DBNAME=url_shortener
 SSLMODE=disable
 DB_HOST=localhost
 DB_PORT=5432
+
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URL=http://localhost:8000/auth/google/callback
+FRONTEND_URL=http://localhost:5500
 ```
+
+To get the Google values, see "Google sign-in setup" in `Backend/README.md`.
 
 ### 5. Run the backend
 
@@ -182,6 +194,8 @@ Then open:
 http://localhost:5500
 ```
 
+Use `localhost`, not `127.0.0.1`, or the browser won't send the sign-in cookie to the backend.
+
 ## API Endpoints
 
 ### POST /shorten
@@ -200,17 +214,26 @@ Example response:
 
 ```json
 {
-  "short_url": "http://localhost:8000/redirect?code=ABC123"
+  "short_url": "http://localhost:8000/ABC123"
 }
 ```
 
-### GET /redirect?code=ABC123
+### GET /ABC123
 
-Used to redirect the browser to the original URL.
+Used to redirect the browser to the original URL. `/redirect?code=ABC123` also works.
+
+### Authentication
+
+- `GET /auth/google/login`: start Google sign-in
+- `GET /auth/google/callback`: Google redirects here after sign-in
+- `GET /auth/me`: the signed-in user, or `401`
+- `POST /auth/logout`: sign out
+
+See `Backend/README.md` for details.
 
 ## Notes
 
 - Guest-created links expire after 2 minutes.
-- Registered or user-specific links do not have an expiry.
+- Signed-in users' links do not have an expiry.
 - The app uses Redis as a cache layer and PostgreSQL as the source of truth.
 - CORS is enabled for local development so the frontend can communicate with the backend in the browser.

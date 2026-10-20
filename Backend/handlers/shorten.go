@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"url_shortner/auth"
 	"url_shortner/storage"
 	"url_shortner/utils"
 )
@@ -34,11 +36,10 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract user ID from header, default to "guest" if not provided
-	userID := r.Header.Get("X-User-ID")
-
-	if userID == "" {
-		userID = "guest"
+	// Signed-in users come from the session cookie (auth.Middleware); everyone else is a guest
+	userID := "guest"
+	if id, ok := auth.UserID(r.Context()); ok {
+		userID = strconv.FormatInt(id, 10)
 	}
 
 	// Parse JSON request body, capped at 4 KB so oversized payloads are rejected

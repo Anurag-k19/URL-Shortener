@@ -8,7 +8,7 @@ The API is used to:
 
 - Create a short URL from a long URL
 - Redirect a short URL back to the original URL
-- Keep track of guest and user-specific links
+- Sign users in with Google, and keep track of guest and signed-in users' links
 - Cache redirects in Redis for faster lookups
 
 ## How it works
@@ -25,13 +25,20 @@ The API is used to:
 .
 ├── main.go
 ├── auth/
-│   └── handlers.go
+│   ├── google.go       # OAuth/OIDC setup
+│   ├── login.go        # /auth/google/login
+│   ├── callback.go     # /auth/google/callback
+│   ├── session.go      # sessions in Redis + cookie
+│   ├── middleware.go   # session cookie -> user ID in request context
+│   ├── account.go      # /auth/me, /auth/logout
+│   └── users.go        # users table queries
 ├── handlers/
 │   ├── shorten.go
 │   └── redirect.go
 ├── migrations/
 │   ├── 001_create_short_urls.sql
-│   └── 002_migrate_urls_data.sql
+│   ├── 002_migrate_urls_data.sql
+│   └── 003_create_users.sql
 ├── storage/
 │   ├── db.go
 │   ├── partitions.go
@@ -57,7 +64,7 @@ Use this endpoint when you want to shorten a long URL.
 Headers:
 
 - `Content-Type: application/json`
-- `X-User-ID` (optional): if provided, the URL is associated with that user; otherwise it is treated as a guest link
+- The `session` cookie (sent automatically by the browser after signing in). Without it, the request is treated as a guest.
 
 Request body:
 
@@ -78,7 +85,7 @@ Response:
 Behavior:
 
 - Guest links expire after 2 minutes.
-- User-linked links do not expire.
+- Signed-in users' links do not expire.
 - If the same user submits the same long URL again and their earlier short URL hasn't expired, the service returns it instead of creating a duplicate.
 
 ### 2) Redirect to the original URL
@@ -99,6 +106,24 @@ Behavior:
 - If the link has expired, it returns `410 Gone`. The row is kept in PostgreSQL for analysis.
 - If the link is valid, it returns `302 Found` and redirects the browser.
 
+### 3) Authentication (Google sign-in)
+
+| Endpoint | Method | What it does |
+|---|---|---|
+| `/auth/google/login` | GET | Redirects to Google's sign-in page. Open it in the browser, not with `fetch`. |
+| `/auth/google/callback` | GET | Google redirects here. Verifies the sign-in, saves the user, sets the `session` cookie and redirects to `FRONTEND_URL`. |
+| `/auth/me` | GET | Returns `{"id", "email", "name"}` for the signed-in user, or `401`. |
+| `/auth/logout` | POST | Deletes the session and clears the cookie. Returns `204`. |
+
+How it works:
+
+1. `/auth/google/login` stores a random `state` in a short-lived cookie and sends the browser to Google.
+2. Google sends the browser back to `/auth/google/callback` with a `code`. The server checks `state` (CSRF protection), swaps the code for an ID token, verifies it, and upserts the user into `users` by their Google `sub`.
+3. The server creates a session in Redis (`session:<random id>` → user ID, 7 days) and sets an HttpOnly `session` cookie.
+4. On every request, `auth.Middleware` looks the cookie up in Redis and puts the user ID in the request context. Handlers read it with `auth.UserID(ctx)`. Requests without a valid session are guests.
+
+The old `X-User-ID` header is no longer used: anyone could set it to any value.
+
 ## Example usage
 
 ### Create a short URL
@@ -109,12 +134,14 @@ curl -X POST http://localhost:8000/shorten \
   -d '{"url":"https://www.example.com"}'
 ```
 
-### Create a short URL for a specific user
+### Create a short URL as a signed-in user
+
+Sign in through the frontend, then the browser sends the `session` cookie automatically. From the terminal, copy the cookie value from DevTools (Application → Cookies):
 
 ```bash
 curl -X POST http://localhost:8000/shorten \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: user123" \
+  -b "session=<your session id>" \
   -d '{"url":"https://www.example.com"}'
 ```
 
@@ -144,7 +171,20 @@ SSLMODE=disable
 DB_HOST=localhost
 DB_PORT=5432
 BASE_URL=http://localhost:8000   # optional: the domain used in returned short links
+
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URL=http://localhost:8000/auth/google/callback
+FRONTEND_URL=http://localhost:5500   # where to send the browser after signing in
 ```
+
+### Google sign-in setup
+
+1. In [Google Cloud Console](https://console.cloud.google.com), create a project and open **Google Auth Platform**.
+2. **Clients → Create client → Web application**. Add `http://localhost:8000/auth/google/callback` as an authorised redirect URI. Copy the client ID and secret into `.env`.
+3. **Audience**: while the app is in Testing, add your Gmail under **Test users**. Only listed users can sign in.
+
+Open the frontend as `http://localhost:5500`, not `http://127.0.0.1:5500`. The browser treats them as different sites, so the session cookie set by `localhost:8000` is only sent from `localhost` pages.
 
 ### Database setup
 
@@ -154,6 +194,7 @@ The schema lives in `migrations/`. Run the files in order with `psql`, once per 
 
 ```bash
 psql -U postgres -d url_shortener -f migrations/001_create_short_urls.sql
+psql -U postgres -d url_shortener -f migrations/003_create_users.sql
 ```
 
 **Existing database with the old `urls` table:** run both files. `002` copies your rows into `short_urls` and renames the old table to `urls_old` as a backup.
@@ -161,6 +202,7 @@ psql -U postgres -d url_shortener -f migrations/001_create_short_urls.sql
 ```bash
 psql -U postgres -d url_shortener -f migrations/001_create_short_urls.sql
 psql -U postgres -d url_shortener -f migrations/002_migrate_urls_data.sql
+psql -U postgres -d url_shortener -f migrations/003_create_users.sql
 ```
 
 Once everything works, you can remove the backup with `DROP TABLE urls_old;`.

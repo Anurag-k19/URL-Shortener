@@ -240,6 +240,10 @@ a { color: inherit; }
 .button:disabled { cursor: not-allowed; opacity: 0.66; }
 .button--copy { min-width: 115px; height: 48px; background: var(--accent); box-shadow: none; }
 .button--copy:hover:not(:disabled) { background: var(--accent-dark); }
+.nav__auth { display: flex; align-items: center; gap: 12px; }
+.button--nav { min-width: 0; height: 40px; padding: 0 16px; font-size: 0.88rem; text-decoration: none; box-shadow: none; }
+.button--ghost { color: var(--ink); background: transparent; border: 1px solid var(--line); }
+.button--ghost:hover:not(:disabled) { color: white; }
 
 .form__error {
   min-height: 20px;
@@ -343,6 +347,8 @@ a { color: inherit; }
   .hero__title { letter-spacing: -0.06em; }
   .shortener__form { flex-direction: column; }
   .button { width: 100%; }
+  .nav__auth .button { width: auto; }
+  .nav__auth .nav__status { display: none; }
   .form__error { text-align: center; }
   .result { grid-template-columns: auto minmax(0, 1fr); padding: 18px; }
   .result .button { grid-column: 1 / -1; }

@@ -9,6 +9,9 @@ export const CONFIG = Object.freeze({
     endpoints: Object.freeze({
       shorten: "/shorten",
       redirect: "/redirect",
+      login: "/auth/google/login",
+      me: "/auth/me",
+      logout: "/auth/logout",
     }),
   }),
 });
